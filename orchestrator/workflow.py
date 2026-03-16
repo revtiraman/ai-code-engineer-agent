@@ -18,7 +18,7 @@ from utils.logger import get_logger
 
 logger = get_logger("workflow")
 
-MAX_RETRIES = 5
+MAX_RETRIES = 2
 
 
 # ------------------------------------------------
