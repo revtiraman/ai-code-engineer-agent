@@ -1,6 +1,5 @@
 streamlit==1.40.2
 langgraph==0.2.56
-chromadb==0.5.23
 numpy==1.26.4
 python-dotenv==1.0.1
 requests==2.32.3
