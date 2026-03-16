@@ -227,6 +227,12 @@ def _chat_with_fallback(system_prompt, user_prompt, bedrock_model, openrouter_mo
                 return _groq_chat(system_prompt, user_prompt, groq_model)
             raise exc
 
+    if not os.getenv("GROQ_API_KEY"):
+        raise RuntimeError(
+            "No LLM provider credentials found. Set at least one of: "
+            "AWS_BEARER_TOKEN_BEDROCK, OPENROUTER_API_KEY/OPENROUTER_API_KEYS, or GROQ_API_KEY"
+        )
+
     return _groq_chat(system_prompt, user_prompt, groq_model)
 
 

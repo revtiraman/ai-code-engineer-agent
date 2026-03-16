@@ -6,10 +6,6 @@ from contextlib import redirect_stdout
 
 import streamlit as st
 
-from github.repo_loader import repo_loader_node
-from orchestrator.workflow import build_workflow
-from rag.repo_indexer import repo_indexer_node
-
 
 def _apply_streamlit_secrets_to_env() -> None:
     """Expose Streamlit secrets as environment variables for existing code paths."""
@@ -78,6 +74,21 @@ if run_clicked:
 
     with st.spinner("Running pipeline... this can take a few minutes"):
         try:
+            has_bedrock = bool(os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip())
+            has_openrouter = bool(os.getenv("OPENROUTER_API_KEY", "").strip() or os.getenv("OPENROUTER_API_KEYS", "").strip())
+            has_groq = bool(os.getenv("GROQ_API_KEY", "").strip())
+
+            if not (has_bedrock or has_openrouter or has_groq):
+                st.error(
+                    "No LLM credentials configured. Add one of these in Streamlit Secrets: "
+                    "AWS_BEARER_TOKEN_BEDROCK, OPENROUTER_API_KEY/OPENROUTER_API_KEYS, or GROQ_API_KEY"
+                )
+                st.stop()
+
+            from github.repo_loader import repo_loader_node
+            from rag.repo_indexer import repo_indexer_node
+            from orchestrator.workflow import build_workflow
+
             state = {
                 "repo_url": repo_url.strip(),
                 "user_prompt": user_prompt.strip(),
