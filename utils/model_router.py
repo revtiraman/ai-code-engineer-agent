@@ -164,17 +164,44 @@ def _openrouter_chat_with_key(system_prompt, user_prompt, model, api_key):
     return content
 
 
+def _compact_prompt_for_retry(user_prompt):
+    # Strip excess whitespace and cap size for emergency retry.
+    compact = " ".join(user_prompt.split())
+    if len(compact) <= 900:
+        return compact
+    return compact[:900] + "\n\n[Prompt truncated to fit provider token limits]"
+
+
+def _is_prompt_limit_error(message):
+    lowered = message.lower()
+    return "prompt tokens limit exceeded" in lowered or "prompt is too long" in lowered
+
+
 def _openrouter_chat(system_prompt, user_prompt, model):
     api_keys = _get_openrouter_api_keys()
     if not api_keys:
         raise RuntimeError("OPENROUTER_API_KEY or OPENROUTER_API_KEYS is not set")
 
     errors = []
+    saw_prompt_limit_error = False
     for index, api_key in enumerate(api_keys, start=1):
         try:
             return _openrouter_chat_with_key(system_prompt, user_prompt, model, api_key)
         except RuntimeError as exc:
-            errors.append(f"key#{index}: {exc}")
+            message = str(exc)
+            if _is_prompt_limit_error(message):
+                saw_prompt_limit_error = True
+            errors.append(f"key#{index}: {message}")
+
+    # Last-resort retry once with compacted prompt when provider rejects prompt length.
+    if saw_prompt_limit_error:
+        compact_prompt = _compact_prompt_for_retry(user_prompt)
+        if compact_prompt != user_prompt:
+            for index, api_key in enumerate(api_keys, start=1):
+                try:
+                    return _openrouter_chat_with_key(system_prompt, compact_prompt, model, api_key)
+                except RuntimeError as exc:
+                    errors.append(f"key#{index} (compact): {exc}")
 
     raise RuntimeError("OpenRouter request failed for all keys: " + " | ".join(errors))
 

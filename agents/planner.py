@@ -66,7 +66,8 @@ def planner_node(state):
         logger.info("Generated Plan: %s", plan)
         return state
 
-    for block in retrieved_blocks[:5]:
+    # Keep planner prompts compact for low-credit LLM accounts.
+    for block in retrieved_blocks[:3]:
 
         file_path = block.get("file", "")
         code_type = block.get("type", "")
@@ -80,7 +81,7 @@ TYPE: {code_type}
 NAME: {name}
 
 CODE:
-{code[:400]}
+{code[:220]}
 
 -------------------------
 """
