@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+BEDROCK_OPENAI_API_URL = os.getenv(
+    "AWS_BEDROCK_OPENAI_API_URL",
+    "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
+)
 
 # Use OpenRouter as primary provider. Allow per-role model overrides.
 DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.7-sonnet")
@@ -18,6 +22,13 @@ OPENROUTER_CODER_MODEL = os.getenv("OPENROUTER_CODER_MODEL", DEFAULT_OPENROUTER_
 OPENROUTER_DEBUGGER_MODEL = os.getenv("OPENROUTER_DEBUGGER_MODEL", DEFAULT_OPENROUTER_MODEL)
 OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "1024"))
 GROQ_MAX_RETRIES = int(os.getenv("GROQ_MAX_RETRIES", "4"))
+BEDROCK_MAX_TOKENS = int(os.getenv("BEDROCK_MAX_TOKENS", os.getenv("OPENROUTER_MAX_TOKENS", "1024")))
+
+# Bedrock / Nova role-based model mapping
+DEFAULT_BEDROCK_MODEL = os.getenv("BEDROCK_MODEL", "amazon.nova-pro-v1:0")
+BEDROCK_PLANNER_MODEL = os.getenv("BEDROCK_PLANNER_MODEL", DEFAULT_BEDROCK_MODEL)
+BEDROCK_CODER_MODEL = os.getenv("BEDROCK_CODER_MODEL", DEFAULT_BEDROCK_MODEL)
+BEDROCK_DEBUGGER_MODEL = os.getenv("BEDROCK_DEBUGGER_MODEL", DEFAULT_BEDROCK_MODEL)
 
 
 def _extract_retry_delay_seconds(message, default_delay=3.0):
@@ -43,6 +54,56 @@ def _get_openrouter_api_keys():
         keys.append(single_key)
 
     return keys
+
+
+def _get_bedrock_bearer_token():
+    return os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
+
+
+def _bedrock_chat(system_prompt, user_prompt, model):
+    token = _get_bedrock_bearer_token()
+    if not token:
+        raise RuntimeError("AWS_BEARER_TOKEN_BEDROCK is not set")
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0,
+        "max_tokens": BEDROCK_MAX_TOKENS,
+    }
+
+    req = request.Request(
+        BEDROCK_OPENAI_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST"
+    )
+
+    try:
+        with request.urlopen(req, timeout=120) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Bedrock request failed: {exc.code} {detail}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Bedrock connection failed: {exc.reason}") from exc
+
+    choices = data.get("choices", [])
+    if not choices:
+        raise RuntimeError("Bedrock returned no choices")
+
+    message = choices[0].get("message", {})
+    content = message.get("content")
+    if not content:
+        raise RuntimeError("Bedrock returned empty content")
+
+    return content
 
 
 def _openrouter_chat_with_key(system_prompt, user_prompt, model, api_key):
@@ -149,7 +210,14 @@ def _groq_chat(system_prompt, user_prompt, model):
     raise RuntimeError(f"Groq request failed: {last_error}")
 
 
-def _chat_with_fallback(system_prompt, user_prompt, openrouter_model, groq_model):
+def _chat_with_fallback(system_prompt, user_prompt, bedrock_model, openrouter_model, groq_model):
+    if _get_bedrock_bearer_token():
+        try:
+            return _bedrock_chat(system_prompt, user_prompt, bedrock_model)
+        except RuntimeError:
+            # Continue to alternate providers when Bedrock is unavailable.
+            pass
+
     if _get_openrouter_api_keys():
         try:
             return _openrouter_chat(system_prompt, user_prompt, openrouter_model)
@@ -166,6 +234,7 @@ def planner_model(prompt):
     return _chat_with_fallback(
         system_prompt="You are a senior software architect.",
         user_prompt=prompt,
+        bedrock_model=BEDROCK_PLANNER_MODEL,
         openrouter_model=OPENROUTER_PLANNER_MODEL,
         groq_model="llama-3.3-70b-versatile"
     )
@@ -175,6 +244,7 @@ def coder_model(prompt):
     return _chat_with_fallback(
         system_prompt="You are an expert Python developer.",
         user_prompt=prompt,
+        bedrock_model=BEDROCK_CODER_MODEL,
         openrouter_model=OPENROUTER_CODER_MODEL,
         groq_model="llama-3.1-8b-instant"
     )
@@ -184,6 +254,7 @@ def debugger_model(prompt):
     return _chat_with_fallback(
         system_prompt="You are a senior debugging engineer.",
         user_prompt=prompt,
+        bedrock_model=BEDROCK_DEBUGGER_MODEL,
         openrouter_model=OPENROUTER_DEBUGGER_MODEL,
         groq_model="llama-3.1-8b-instant"
     )
