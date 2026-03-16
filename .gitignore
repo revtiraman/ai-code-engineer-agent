@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+
+# Runtime / generated artifacts
+workspace/
+vector_db/
+testrepo/
+*.log
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
