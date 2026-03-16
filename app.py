@@ -1,0 +1,150 @@
+import io
+import logging
+import os
+import traceback
+from contextlib import redirect_stdout
+
+import streamlit as st
+
+from github.repo_loader import repo_loader_node
+from orchestrator.workflow import build_workflow
+from rag.repo_indexer import repo_indexer_node
+
+
+def _apply_streamlit_secrets_to_env() -> None:
+    """Expose Streamlit secrets as environment variables for existing code paths."""
+    try:
+        for key, value in st.secrets.items():
+            os.environ[str(key)] = str(value)
+    except Exception:
+        # Local runs may not have Streamlit secrets configured.
+        pass
+
+
+class _BufferLogHandler(logging.Handler):
+    def __init__(self, sink):
+        super().__init__()
+        self.sink = sink
+        self.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s  [%(name)-20s]  %(levelname)-8s  %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
+
+    def emit(self, record):
+        try:
+            self.sink.append(self.format(record))
+        except Exception:
+            pass
+
+
+st.set_page_config(page_title="AI Code Engineer Agent", page_icon="🤖", layout="wide")
+_apply_streamlit_secrets_to_env()
+
+st.title("🤖 AI Code Engineer Agent")
+st.caption("Autonomous repository modification pipeline")
+
+with st.sidebar:
+    st.header("Configuration")
+    repo_url = st.text_input(
+        "Repository URL",
+        value="https://github.com/revtiraman/fastapi",
+        help="Public GitHub repository URL",
+    )
+    user_prompt = st.text_area(
+        "Task / Prompt",
+        value="Add logging to API routes",
+        height=120,
+    )
+    run_clicked = st.button("Run Pipeline", type="primary", use_container_width=True)
+
+st.markdown("---")
+log_container = st.container()
+result_container = st.container()
+
+if run_clicked:
+    if not repo_url.strip() or not user_prompt.strip():
+        st.error("Please provide both repository URL and prompt.")
+        st.stop()
+
+    logs = []
+    stdout_buffer = io.StringIO()
+
+    root_logger = logging.getLogger()
+    handler = _BufferLogHandler(logs)
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+    with st.spinner("Running pipeline... this can take a few minutes"):
+        try:
+            state = {
+                "repo_url": repo_url.strip(),
+                "user_prompt": user_prompt.strip(),
+                "retry_count": 0,
+                "has_error": False,
+            }
+
+            with redirect_stdout(stdout_buffer):
+                state = repo_loader_node(state)
+                state = repo_indexer_node(state)
+                workflow = build_workflow()
+                result = workflow.invoke(state)
+
+            stdout_text = stdout_buffer.getvalue().strip()
+            if stdout_text:
+                logs.extend(stdout_text.splitlines())
+
+            with log_container:
+                st.subheader("Live Logs")
+                st.code("\n".join(logs) if logs else "No logs captured.", language="text")
+
+            with result_container:
+                st.subheader("Run Result")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Execution Success", str(result.get("execution_success")))
+                col2.metric("Tests Passed", str(result.get("tests_passed")))
+                col3.metric("Edited Files", len(result.get("edited_files", [])))
+
+                if result.get("execution_error"):
+                    st.error(result.get("execution_error"))
+
+                if result.get("debug_diagnosis"):
+                    st.warning(result.get("debug_diagnosis"))
+
+                explanation_file = result.get("explanation_file")
+                if explanation_file:
+                    st.success(f"Explanation generated: {explanation_file}")
+                    preview = result.get("explanation_preview")
+                    if preview:
+                        st.text_area("Explanation preview", preview, height=220)
+
+                if result.get("edited_files"):
+                    st.markdown("#### Edited Files")
+                    for file_path in result.get("edited_files", []):
+                        st.write(f"- {file_path}")
+
+                if result.get("test_results"):
+                    st.markdown("#### Test Results")
+                    st.json(result.get("test_results"))
+
+                if result.get("branch_name"):
+                    st.info(f"Branch: {result.get('branch_name')}")
+
+                if result.get("pr_url"):
+                    st.success(f"PR: {result.get('pr_url')}")
+
+                with st.expander("Raw Result JSON"):
+                    st.json(result)
+
+        except Exception:
+            logs.extend(stdout_buffer.getvalue().splitlines())
+            with log_container:
+                st.subheader("Live Logs")
+                st.code("\n".join(logs) if logs else "No logs captured.", language="text")
+
+            with result_container:
+                st.error("Pipeline failed with an exception")
+                st.code(traceback.format_exc(), language="text")
+        finally:
+            root_logger.removeHandler(handler)
