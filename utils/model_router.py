@@ -20,7 +20,6 @@ DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.7-s
 OPENROUTER_PLANNER_MODEL = os.getenv("OPENROUTER_PLANNER_MODEL", DEFAULT_OPENROUTER_MODEL)
 OPENROUTER_CODER_MODEL = os.getenv("OPENROUTER_CODER_MODEL", DEFAULT_OPENROUTER_MODEL)
 OPENROUTER_DEBUGGER_MODEL = os.getenv("OPENROUTER_DEBUGGER_MODEL", DEFAULT_OPENROUTER_MODEL)
-OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "1024"))
 GROQ_MAX_RETRIES = int(os.getenv("GROQ_MAX_RETRIES", "4"))
 BEDROCK_MAX_TOKENS = int(os.getenv("BEDROCK_MAX_TOKENS", os.getenv("OPENROUTER_MAX_TOKENS", "1024")))
 
@@ -58,6 +57,20 @@ def _get_openrouter_api_keys():
 
 def _get_bedrock_bearer_token():
     return os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
+
+
+def _get_openrouter_max_tokens():
+    raw = os.getenv("OPENROUTER_MAX_TOKENS", "96").strip()
+    try:
+        parsed = int(raw)
+    except ValueError:
+        parsed = 96
+
+    if parsed <= 0:
+        parsed = 96
+
+    # Keep OpenRouter requests affordable by default in hosted environments.
+    return min(parsed, 96)
 
 
 def _bedrock_chat(system_prompt, user_prompt, model):
@@ -115,7 +128,7 @@ def _openrouter_chat_with_key(system_prompt, user_prompt, model, api_key):
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0,
-        "max_tokens": OPENROUTER_MAX_TOKENS
+        "max_tokens": _get_openrouter_max_tokens()
     }
 
     req = request.Request(

@@ -15,6 +15,7 @@ def _find_architecture_image() -> Path | None:
         Path("assets/architecture.jpg"),
         Path("assets/architecture.jpeg"),
         Path("assets/architecture.webp"),
+        Path("assets/architecture.svg"),
         Path("assets/architecture-diagram.png"),
         Path("docs/architecture.png"),
     ]
@@ -32,6 +33,10 @@ def _apply_streamlit_secrets_to_env() -> None:
     except Exception:
         # Local runs may not have Streamlit secrets configured.
         pass
+
+
+def _get_llm_provider() -> str:
+    return os.getenv("LLM_PROVIDER", "").strip().lower()
 
 
 class _BufferLogHandler(logging.Handler):
@@ -60,11 +65,15 @@ st.caption("Autonomous repository modification pipeline")
 
 with st.sidebar:
     st.header("Configuration")
+    provider_label = _get_llm_provider() or "auto"
+    openrouter_tokens = os.getenv("OPENROUTER_MAX_TOKENS", "96")
+    st.caption(f"Provider: {provider_label} | OpenRouter max tokens: {openrouter_tokens}")
+
     architecture_image = _find_architecture_image()
     if architecture_image:
         st.image(str(architecture_image), caption="System architecture", use_container_width=True)
     else:
-        st.caption("Add architecture image at assets/architecture.png to display it here.")
+        st.caption("Add architecture image at assets/architecture.png (or .jpg/.jpeg/.webp/.svg) to display it here.")
 
     repo_url = st.text_input(
         "Repository URL",
@@ -97,11 +106,31 @@ if run_clicked:
 
     with st.spinner("Running pipeline... this can take a few minutes"):
         try:
+            provider = _get_llm_provider()
             has_bedrock = bool(os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip())
             has_openrouter = bool(os.getenv("OPENROUTER_API_KEY", "").strip() or os.getenv("OPENROUTER_API_KEYS", "").strip())
             has_groq = bool(os.getenv("GROQ_API_KEY", "").strip())
 
-            if not (has_bedrock or has_openrouter or has_groq):
+            # Respect strict provider mode when configured.
+            if provider == "openrouter" and not has_openrouter:
+                st.error(
+                    "LLM_PROVIDER is set to openrouter, but OPENROUTER_API_KEY/OPENROUTER_API_KEYS is missing in Streamlit Secrets."
+                )
+                st.stop()
+
+            if provider == "bedrock" and not has_bedrock:
+                st.error(
+                    "LLM_PROVIDER is set to bedrock, but AWS_BEARER_TOKEN_BEDROCK is missing in Streamlit Secrets."
+                )
+                st.stop()
+
+            if provider == "groq" and not has_groq:
+                st.error(
+                    "LLM_PROVIDER is set to groq, but GROQ_API_KEY is missing in Streamlit Secrets."
+                )
+                st.stop()
+
+            if not provider and not (has_bedrock or has_openrouter or has_groq):
                 st.error(
                     "No LLM credentials configured. Add one of these in Streamlit Secrets: "
                     "AWS_BEARER_TOKEN_BEDROCK, OPENROUTER_API_KEY/OPENROUTER_API_KEYS, or GROQ_API_KEY"
