@@ -3,8 +3,25 @@ import logging
 import os
 import traceback
 from contextlib import redirect_stdout
+from pathlib import Path
 
 import streamlit as st
+
+
+def _find_architecture_image() -> Path | None:
+    """Find an architecture diagram image in common repository locations."""
+    candidates = [
+        Path("assets/architecture.png"),
+        Path("assets/architecture.jpg"),
+        Path("assets/architecture.jpeg"),
+        Path("assets/architecture.webp"),
+        Path("assets/architecture-diagram.png"),
+        Path("docs/architecture.png"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _apply_streamlit_secrets_to_env() -> None:
@@ -43,6 +60,12 @@ st.caption("Autonomous repository modification pipeline")
 
 with st.sidebar:
     st.header("Configuration")
+    architecture_image = _find_architecture_image()
+    if architecture_image:
+        st.image(str(architecture_image), caption="System architecture", use_container_width=True)
+    else:
+        st.caption("Add architecture image at assets/architecture.png to display it here.")
+
     repo_url = st.text_input(
         "Repository URL",
         value="https://github.com/revtiraman/fastapi",

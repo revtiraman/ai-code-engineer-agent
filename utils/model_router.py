@@ -176,7 +176,19 @@ def _groq_chat(system_prompt, user_prompt, model):
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not set")
 
-    client = Groq(api_key=api_key)
+    try:
+        client = Groq(api_key=api_key)
+    except TypeError as exc:
+        message = str(exc)
+        if "proxies" in message:
+            raise RuntimeError(
+                "Groq client initialization failed due to an httpx compatibility issue "
+                "(unexpected keyword argument 'proxies'). Pin httpx to a compatible version "
+                "or force a different provider with LLM_PROVIDER=openrouter."
+            ) from exc
+        raise RuntimeError(f"Groq client initialization failed: {message}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Groq client initialization failed: {exc}") from exc
 
     last_error = None
     for attempt in range(1, GROQ_MAX_RETRIES + 1):
@@ -211,29 +223,57 @@ def _groq_chat(system_prompt, user_prompt, model):
 
 
 def _chat_with_fallback(system_prompt, user_prompt, bedrock_model, openrouter_model, groq_model):
-    if _get_bedrock_bearer_token():
-        try:
-            return _bedrock_chat(system_prompt, user_prompt, bedrock_model)
-        except RuntimeError:
-            # Continue to alternate providers when Bedrock is unavailable.
-            pass
+    provider_errors = []
 
-    if _get_openrouter_api_keys():
-        try:
-            return _openrouter_chat(system_prompt, user_prompt, openrouter_model)
-        except RuntimeError as exc:
-            # If OpenRouter keys are exhausted/invalid, continue with Groq.
-            if os.getenv("GROQ_API_KEY"):
-                return _groq_chat(system_prompt, user_prompt, groq_model)
-            raise exc
+    # Optional strict provider selection: bedrock, openrouter, groq, auto
+    provider_mode = os.getenv("LLM_PROVIDER", "auto").strip().lower()
+    if provider_mode not in {"auto", "bedrock", "openrouter", "groq"}:
+        provider_mode = "auto"
 
-    if not os.getenv("GROQ_API_KEY"):
+    has_bedrock = bool(_get_bedrock_bearer_token())
+    has_openrouter = bool(_get_openrouter_api_keys())
+    has_groq = bool(os.getenv("GROQ_API_KEY"))
+
+    if provider_mode == "bedrock":
+        if not has_bedrock:
+            raise RuntimeError("LLM_PROVIDER=bedrock but AWS_BEARER_TOKEN_BEDROCK is not set")
+        return _bedrock_chat(system_prompt, user_prompt, bedrock_model)
+
+    if provider_mode == "openrouter":
+        if not has_openrouter:
+            raise RuntimeError("LLM_PROVIDER=openrouter but OPENROUTER_API_KEY/OPENROUTER_API_KEYS is not set")
+        return _openrouter_chat(system_prompt, user_prompt, openrouter_model)
+
+    if provider_mode == "groq":
+        if not has_groq:
+            raise RuntimeError("LLM_PROVIDER=groq but GROQ_API_KEY is not set")
+        return _groq_chat(system_prompt, user_prompt, groq_model)
+
+    if not (has_bedrock or has_openrouter or has_groq):
         raise RuntimeError(
             "No LLM provider credentials found. Set at least one of: "
             "AWS_BEARER_TOKEN_BEDROCK, OPENROUTER_API_KEY/OPENROUTER_API_KEYS, or GROQ_API_KEY"
         )
 
-    return _groq_chat(system_prompt, user_prompt, groq_model)
+    if has_bedrock:
+        try:
+            return _bedrock_chat(system_prompt, user_prompt, bedrock_model)
+        except RuntimeError as exc:
+            provider_errors.append(f"bedrock: {exc}")
+
+    if has_openrouter:
+        try:
+            return _openrouter_chat(system_prompt, user_prompt, openrouter_model)
+        except RuntimeError as exc:
+            provider_errors.append(f"openrouter: {exc}")
+
+    if has_groq:
+        try:
+            return _groq_chat(system_prompt, user_prompt, groq_model)
+        except RuntimeError as exc:
+            provider_errors.append(f"groq: {exc}")
+
+    raise RuntimeError("All configured LLM providers failed: " + " | ".join(provider_errors))
 
 
 def planner_model(prompt):
