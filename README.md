@@ -8,6 +8,13 @@ This project includes:
 - Streamlit UI for quick deployment/run control
 - Optional Next.js frontend in `frontend/`
 - Pluggable LLM routing with provider fallback (OpenRouter, Bedrock, Groq)
+  
+## 🎥 Live Demo (See AI Agent in Action 🚀)
+
+Watch how the system clones, edits, and fixes code automatically:
+
+[![AI Engineer Demo](https://img.youtube.com/vi/O-a4ukwAHfU/0.jpg)](https://www.youtube.com/watch?v=O-a4ukwAHfU)
+
 
 ## What It Does
 
